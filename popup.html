@@ -17,7 +17,6 @@
         </svg>
         <h1 class="header-title">rabbit-hole</h1>
       </div>
-      <span id="pendingCountBadge" class="count-badge" title="Pending scheduled tasks">0</span>
     </header>
 
     <!-- Notification Banner -->
@@ -39,16 +38,44 @@
         ></textarea>
       </div>
 
+      <!-- Custom Date & Time Controls (No native date picker) -->
       <div class="form-group">
-        <label for="datetimeInput" class="form-label">
-          Trigger Date &amp; Time
-        </label>
-        <input
-          type="datetime-local"
-          id="datetimeInput"
-          class="form-input"
-          required
-        >
+        <label class="form-label">Trigger Date &amp; Time</label>
+        
+        <!-- Target Time Preview Card -->
+        <div class="dt-display-card">
+          <div class="dt-display-main">
+            <svg class="dt-display-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"></circle>
+              <polyline points="12 6 12 12 16 14"></polyline>
+            </svg>
+            <span id="dtDisplayText" class="dt-display-text">Today, 12:15 PM</span>
+          </div>
+          <span id="dtRelativeText" class="dt-relative-text">in 15 minutes</span>
+        </div>
+
+        <!-- Date & Time Button Controls -->
+        <div class="dt-controls">
+          <!-- Date Row -->
+          <div class="dt-row">
+            <span class="dt-row-label">Day:</span>
+            <div class="btn-group">
+              <button type="button" id="btnDateToday" class="btn-chip" title="Reset date to today">Today</button>
+              <button type="button" id="btnDateWeekend" class="btn-chip" title="Schedule for upcoming weekend">Weekend</button>
+              <button type="button" id="btnDatePlus1" class="btn-chip" title="Advance 1 day">+1 Day</button>
+            </div>
+          </div>
+
+          <!-- Time Row -->
+          <div class="dt-row">
+            <span class="dt-row-label">Time:</span>
+            <div class="btn-group">
+              <button type="button" id="btnTimeMinus15" class="btn-chip" title="Subtract 15 minutes">-15m</button>
+              <button type="button" id="btnTimePlus15" class="btn-chip" title="Add 15 minutes">+15m</button>
+              <button type="button" id="btnTimePlus60" class="btn-chip" title="Add 1 hour">+1h</button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <button type="submit" id="submitBtn" class="btn btn-primary">
@@ -56,19 +83,34 @@
       </button>
     </form>
 
-    <!-- Scheduled Tasks List -->
-    <section class="tasks-section" aria-labelledby="tasksSectionHeading">
-      <div class="section-header">
-        <h2 id="tasksSectionHeading" class="section-title">Scheduled Tasks</h2>
-      </div>
+    <!-- Navigation Tabs (Scheduled vs History) -->
+    <nav class="tab-nav" role="tablist">
+      <button type="button" id="tabBtnScheduled" class="tab-btn active" role="tab" aria-selected="true" aria-controls="scheduledSection">
+        <span>Scheduled</span>
+        <span id="scheduledCountBadge" class="tab-badge">0</span>
+      </button>
+      <button type="button" id="tabBtnHistory" class="tab-btn" role="tab" aria-selected="false" aria-controls="historySection">
+        <span>History (24h)</span>
+        <span id="historyCountBadge" class="tab-badge">0</span>
+      </button>
+    </nav>
 
-      <div id="taskList" class="task-list">
-        <!-- Rendered dynamically by popup.js -->
+    <!-- Scheduled Tasks List Section -->
+    <section id="scheduledSection" class="tasks-section" role="tabpanel" aria-labelledby="tabBtnScheduled">
+      <div id="scheduledTaskList" class="task-list">
+        <!-- Rendered dynamically -->
+      </div>
+    </section>
+
+    <!-- History Tasks List Section -->
+    <section id="historySection" class="tasks-section hidden" role="tabpanel" aria-labelledby="tabBtnHistory">
+      <div id="historyTaskList" class="task-list">
+        <!-- Rendered dynamically -->
       </div>
     </section>
   </div>
 
+  <script src="storage.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
-

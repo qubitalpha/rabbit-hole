@@ -5,7 +5,8 @@
   "description": "schedule Google search queries to automatically open at specified dates and times.",
   "permissions": [
     "storage",
-    "alarms"
+    "alarms",
+    "notifications"
   ],
   "action": {
     "default_popup": "popup.html",
