@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>rabbit-hole</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-brand">
+        <svg class="header-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"></circle>
+          <polyline points="12 6 12 12 16 14"></polyline>
+        </svg>
+        <h1 class="header-title">rabbit-hole</h1>
+      </div>
+      <span id="pendingCountBadge" class="count-badge" title="Pending scheduled tasks">0</span>
+    </header>
+
+    <!-- Notification Banner -->
+    <div id="statusBanner" class="status-banner hidden" role="status" aria-live="polite"></div>
+
+    <!-- Scheduling Form -->
+    <form id="scheduleForm" class="schedule-form" novalidate>
+      <div class="form-group">
+        <label for="queryInput" class="form-label">
+          Search Queries
+          <span class="label-hint">(one per line)</span>
+        </label>
+        <textarea
+          id="queryInput"
+          class="form-textarea"
+          rows="3"
+          placeholder="e.g. latest tech news&#10;weather forecast tomorrow&#10;best cafes nearby"
+          required
+        ></textarea>
+      </div>
+
+      <div class="form-group">
+        <label for="datetimeInput" class="form-label">
+          Trigger Date &amp; Time
+        </label>
+        <input
+          type="datetime-local"
+          id="datetimeInput"
+          class="form-input"
+          required
+        >
+      </div>
+
+      <button type="submit" id="submitBtn" class="btn btn-primary">
+        Schedule Queries
+      </button>
+    </form>
+
+    <!-- Scheduled Tasks List -->
+    <section class="tasks-section" aria-labelledby="tasksSectionHeading">
+      <div class="section-header">
+        <h2 id="tasksSectionHeading" class="section-title">Scheduled Tasks</h2>
+      </div>
+
+      <div id="taskList" class="task-list">
+        <!-- Rendered dynamically by popup.js -->
+      </div>
+    </section>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
+

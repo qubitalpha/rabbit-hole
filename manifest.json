@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "rabbit-hole",
+  "version": "1.0.0",
+  "description": "schedule Google search queries to automatically open at specified dates and times.",
+  "permissions": [
+    "storage",
+    "alarms"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "rabbit-hole"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}
+
