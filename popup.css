@@ -69,8 +69,9 @@ body {
   gap: 8px;
 }
 
-.header-icon {
-  color: var(--color-primary);
+.header-logo {
+  border-radius: 4px;
+  object-fit: contain;
 }
 
 .header-title {
