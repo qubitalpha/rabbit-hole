@@ -23,8 +23,22 @@ async function executeQueries(queries) {
 /**
  * Handle alarm triggering with atomic storage operations
  */
-chrome.alarms.onAlarm.addListener((alarm) => {
-  StorageService.withStorageLock(async () => {
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  // Check if this is a 30-second fallback alarm
+  if (alarm.name.startsWith('fallback_')) {
+    const notifId = alarm.name.replace('fallback_', '');
+    if (pendingNotifications.has(notifId)) {
+      const payload = pendingNotifications.get(notifId);
+      pendingNotifications.delete(notifId);
+      try {
+        await chrome.notifications.clear(notifId);
+      } catch (e) {}
+      await executeQueries(payload.queries);
+    }
+    return;
+  }
+
+  return StorageService.withStorageLock(async () => {
     try {
       const scheduledTasks = await StorageService.getScheduledTasks();
       const taskIndex = scheduledTasks.findIndex((t) => t.id === alarm.name);
@@ -73,6 +87,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       }
 
       await StorageService.setHistoryTasks(history);
+      console.log(`[rabbit-hole] Task ${alarm.name} moved to history (${history.length} total history items)`);
 
       // Set up notification & 30-second fallback to open tabs
       const notifId = `rabbit_hole_notif_${alarm.name}_${Date.now()}`;
@@ -90,21 +105,31 @@ chrome.alarms.onAlarm.addListener((alarm) => {
         }
       }, 30000);
 
+      // Fallback alarm in case service worker sleeps during the 30 seconds
+      chrome.alarms.create(`fallback_${notifId}`, { delayInMinutes: 0.5 });
+
       pendingNotifications.set(notifId, {
         queries: task.queries,
         timeoutId
       });
 
+      const iconPath = chrome.runtime.getURL('icons/icon48.png');
       chrome.notifications.create(notifId, {
         type: 'basic',
-        iconUrl: 'icon.png',
+        iconUrl: iconPath,
         title: `rabbit-hole: ${queryCount} ${queryCount === 1 ? 'Query' : 'Queries'} Ready`,
         message: queryPreview || 'Click to open search results',
         priority: 2,
         requireInteraction: true
+      }, (createdId) => {
+        if (chrome.runtime.lastError) {
+          console.warn('[rabbit-hole] Notification creation failed, opening tabs directly:', chrome.runtime.lastError);
+          clearTimeout(timeoutId);
+          chrome.alarms.clear(`fallback_${notifId}`);
+          pendingNotifications.delete(notifId);
+          executeQueries(task.queries);
+        }
       });
-
-      console.log(`[rabbit-hole] Executed task ${alarm.name}, notification sent with 30s auto-open fallback`);
     } catch (error) {
       console.error('[rabbit-hole] Error handling alarm execution:', error);
     }
@@ -115,6 +140,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
  * Handle notification click: immediately open tabs and cancel 30-second fallback
  */
 chrome.notifications.onClicked.addListener(async (notifId) => {
+  chrome.alarms.clear(`fallback_${notifId}`);
   if (pendingNotifications.has(notifId)) {
     const payload = pendingNotifications.get(notifId);
     clearTimeout(payload.timeoutId);

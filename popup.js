@@ -205,6 +205,7 @@ function switchTab(tab) {
     tabBtnHistory.setAttribute('aria-selected', 'false');
     scheduledSection.classList.remove('hidden');
     historySection.classList.add('hidden');
+    renderScheduledTasks();
   } else {
     tabBtnHistory.classList.add('active');
     tabBtnHistory.setAttribute('aria-selected', 'true');
@@ -212,6 +213,7 @@ function switchTab(tab) {
     tabBtnScheduled.setAttribute('aria-selected', 'false');
     historySection.classList.remove('hidden');
     scheduledSection.classList.add('hidden');
+    renderHistoryTasks();
   }
 }
 

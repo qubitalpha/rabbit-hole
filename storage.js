@@ -41,7 +41,10 @@ async function getHistoryTasks() {
   const data = await chrome.storage.local.get(STORAGE_KEYS.HISTORY_TASKS);
   const history = data[STORAGE_KEYS.HISTORY_TASKS] || [];
   const now = Date.now();
-  const validHistory = history.filter(item => (now - (item.queriedAt || item.triggerTime)) < ONE_DAY_MS);
+  const validHistory = history.filter(item => {
+    const timestamp = item.queriedAt || item.triggerTime || now;
+    return (now - timestamp) < ONE_DAY_MS;
+  });
   
   if (validHistory.length !== history.length) {
     await setHistoryTasks(validHistory);
