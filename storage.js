@@ -24,7 +24,8 @@ function withStorageLock(fn) {
  */
 async function getScheduledTasks() {
   const data = await chrome.storage.local.get(STORAGE_KEYS.SCHEDULED_TASKS);
-  return data[STORAGE_KEYS.SCHEDULED_TASKS] || [];
+  const tasks = data[STORAGE_KEYS.SCHEDULED_TASKS];
+  return Array.isArray(tasks) ? tasks : [];
 }
 
 /**
@@ -39,9 +40,14 @@ async function setScheduledTasks(tasks) {
  */
 async function getHistoryTasks() {
   const data = await chrome.storage.local.get(STORAGE_KEYS.HISTORY_TASKS);
-  const history = data[STORAGE_KEYS.HISTORY_TASKS] || [];
+  const history = Array.isArray(data[STORAGE_KEYS.HISTORY_TASKS]) ? data[STORAGE_KEYS.HISTORY_TASKS] : [];
   const now = Date.now();
   const validHistory = history.filter(item => {
+    if (!item) return false;
+    // For rescheduled items with a future trigger, keep them active
+    if (item.scheduledTaskId && item.nextTriggerTime && item.nextTriggerTime > now) {
+      return true;
+    }
     const timestamp = item.queriedAt || item.triggerTime || now;
     return (now - timestamp) < ONE_DAY_MS;
   });
@@ -83,16 +89,17 @@ function generateTaskId() {
 
 /**
  * Atomically schedule a new task
+ * Saves metadata to storage BEFORE registering Chrome alarm to eliminate race conditions
  */
-async function scheduleNewTask(queries, triggerTime) {
+async function scheduleNewTask(queries, triggerTime, engine = 'google') {
   return withStorageLock(async () => {
     const taskId = generateTaskId();
-    await chrome.alarms.create(taskId, { when: triggerTime });
 
     const tasks = await getScheduledTasks();
     const newTask = {
       id: taskId,
       queries,
+      engine: engine || 'google',
       triggerTime,
       createdAt: Date.now()
     };
@@ -100,7 +107,91 @@ async function scheduleNewTask(queries, triggerTime) {
     await setScheduledTasks(tasks);
     await setLastScheduledTime(triggerTime);
 
+    // Register alarm AFTER task data is persisted
+    await chrome.alarms.create(taskId, { when: triggerTime });
+
     return newTask;
+  });
+}
+
+/**
+ * Atomically move an executed task from scheduled queue into 24-hour history.
+ * Persists BOTH scheduled_tasks and history_tasks in a single atomic storage write.
+ */
+async function moveScheduledTaskToHistory(alarmName) {
+  return withStorageLock(async () => {
+    const data = await chrome.storage.local.get([
+      STORAGE_KEYS.SCHEDULED_TASKS,
+      STORAGE_KEYS.HISTORY_TASKS
+    ]);
+
+    const scheduledTasks = Array.isArray(data[STORAGE_KEYS.SCHEDULED_TASKS])
+      ? data[STORAGE_KEYS.SCHEDULED_TASKS]
+      : [];
+    const taskIndex = scheduledTasks.findIndex((t) => t.id === alarmName);
+
+    if (taskIndex === -1) {
+      console.warn(`[rabbit-hole] No matching task found for alarm: ${alarmName}`);
+      return null;
+    }
+
+    const [task] = scheduledTasks.splice(taskIndex, 1);
+    const now = Date.now();
+
+    const rawHistory = Array.isArray(data[STORAGE_KEYS.HISTORY_TASKS])
+      ? data[STORAGE_KEYS.HISTORY_TASKS]
+      : [];
+    
+    // Prune items older than 24h while keeping future-rescheduled items
+    const history = rawHistory.filter(item => {
+      if (!item) return false;
+      if (item.scheduledTaskId && item.nextTriggerTime && item.nextTriggerTime > now) {
+        return true;
+      }
+      const timestamp = item.queriedAt || item.triggerTime || now;
+      return (now - timestamp) < ONE_DAY_MS;
+    });
+
+    if (task.historyOriginId) {
+      // If this task was a reschedule of an existing history item, update and bring to top
+      const origIndex = history.findIndex(h => h.id === task.historyOriginId);
+      if (origIndex !== -1) {
+        const [orig] = history.splice(origIndex, 1);
+        orig.queriedAt = now;
+        orig.scheduledTaskId = null;
+        orig.nextTriggerTime = null;
+        if (task.engine) orig.engine = task.engine;
+        history.unshift(orig);
+      } else {
+        history.unshift({
+          id: task.id,
+          queries: task.queries,
+          engine: task.engine || 'google',
+          triggerTime: task.triggerTime,
+          queriedAt: now,
+          scheduledTaskId: null,
+          nextTriggerTime: null
+        });
+      }
+    } else {
+      history.unshift({
+        id: task.id,
+        queries: task.queries,
+        engine: task.engine || 'google',
+        triggerTime: task.triggerTime,
+        queriedAt: now,
+        scheduledTaskId: null,
+        nextTriggerTime: null
+      });
+    }
+
+    // Atomic write to storage for both keys
+    await chrome.storage.local.set({
+      [STORAGE_KEYS.SCHEDULED_TASKS]: scheduledTasks,
+      [STORAGE_KEYS.HISTORY_TASKS]: history
+    });
+
+    return task;
   });
 }
 
@@ -155,12 +246,11 @@ async function rescheduleHistoryItem(historyId, additionalMinutes) {
     const triggerTime = Date.now() + additionalMinutes * 60 * 1000;
     const newTaskId = generateTaskId();
 
-    await chrome.alarms.create(newTaskId, { when: triggerTime });
-
     const scheduledTasks = await getScheduledTasks();
     scheduledTasks.push({
       id: newTaskId,
       queries: item.queries,
+      engine: item.engine || 'google',
       triggerTime,
       createdAt: Date.now(),
       historyOriginId: historyId
@@ -171,6 +261,9 @@ async function rescheduleHistoryItem(historyId, additionalMinutes) {
     item.nextTriggerTime = triggerTime;
     await setHistoryTasks(history);
     await setLastScheduledTime(triggerTime);
+
+    // Register alarm AFTER task data is persisted
+    await chrome.alarms.create(newTaskId, { when: triggerTime });
 
     return { item, newTaskId, triggerTime };
   });
@@ -208,6 +301,7 @@ const StorageService = {
   getLastScheduledTime,
   setLastScheduledTime,
   scheduleNewTask,
+  moveScheduledTaskToHistory,
   cancelScheduledTask,
   rescheduleHistoryItem,
   cancelRescheduledHistoryItem
@@ -219,4 +313,3 @@ if (typeof self !== 'undefined') {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = StorageService;
 }
-

@@ -165,6 +165,59 @@ body {
   box-shadow: 0 0 0 3px var(--color-focus);
 }
 
+/* Search Engine Selector */
+.engine-selector {
+  display: flex;
+  gap: 8px;
+}
+
+.engine-option {
+  flex: 1;
+  position: relative;
+  cursor: pointer;
+}
+
+.engine-radio {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.engine-chip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background-color: #ffffff;
+  color: var(--color-text-secondary);
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.engine-radio:checked + .engine-chip.google {
+  background-color: #e8f0fe;
+  color: #1967d2;
+  border-color: #1a73e8;
+  font-weight: 600;
+}
+
+.engine-radio:checked + .engine-chip.youtube {
+  background-color: #fce8e6;
+  color: #c5221f;
+  border-color: #d93025;
+  font-weight: 600;
+}
+
+.engine-chip:hover {
+  border-color: var(--color-border-hover);
+}
+
 /* Date/Time Display Preview Card */
 .dt-display-card {
   display: flex;
@@ -478,9 +531,40 @@ body {
   word-break: break-word;
 }
 
+.query-chip.youtube {
+  background-color: #fce8e6;
+  color: #c5221f;
+  border-color: #fad2cf;
+}
+
 .query-chip-icon {
   opacity: 0.7;
   flex-shrink: 0;
+}
+
+.query-chip.youtube .query-chip-icon {
+  color: #c5221f;
+  opacity: 0.9;
+}
+
+.engine-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  margin-right: 2px;
+  letter-spacing: 0.3px;
+}
+
+.engine-badge.google {
+  background-color: #e8f0fe;
+  color: #1967d2;
+}
+
+.engine-badge.youtube {
+  background-color: #c5221f;
+  color: #ffffff;
 }
 
 .reschedule-tag {

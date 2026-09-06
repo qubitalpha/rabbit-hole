@@ -85,13 +85,30 @@ function formatRelativeTime(timestamp) {
 }
 
 /**
+ * Check if query or task targets YouTube
+ */
+function isYoutubeQuery(query, taskEngine) {
+  if (typeof query !== 'string') return false;
+  if (/^(?:yt|youtube):/i.test(query.trim())) return true;
+  return taskEngine === 'youtube';
+}
+
+/**
+ * Clean engine prefix from query text for UI display
+ */
+function cleanQueryText(query) {
+  if (typeof query !== 'string') return '';
+  return query.trim().replace(/^(?:yt|youtube):\s*/i, '');
+}
+
+/**
  * Update the Target Date & Time display elements
  */
 function updateDateTimeDisplay() {
   const now = Date.now();
   // Clamped to at least 1 minute from now
   if (selectedTimestamp < now + 60000) {
-    selectedTimestamp = now + 15 * 60000;
+    selectedTimestamp = now + 60000;
   }
   dtDisplayText.textContent = formatDisplayDateTime(selectedTimestamp);
   dtRelativeText.textContent = formatRelativeTime(selectedTimestamp);
@@ -282,14 +299,17 @@ async function renderScheduledTasks() {
       chipsContainer.className = 'query-chips';
 
       task.queries.forEach(query => {
+        const isYt = isYoutubeQuery(query, task.engine);
+        const displayText = cleanQueryText(query);
         const chip = document.createElement('span');
-        chip.className = 'query-chip';
+        chip.className = `query-chip ${isYt ? 'youtube' : ''}`;
         chip.innerHTML = `
+          ${isYt ? '<span class="engine-badge youtube">YT</span>' : ''}
           <svg class="query-chip-icon" viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="11" cy="11" r="8"></circle>
             <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
           </svg>
-          <span>${escapeHtml(query)}</span>
+          <span>${escapeHtml(displayText)}</span>
         `;
         chipsContainer.appendChild(chip);
       });
@@ -310,6 +330,13 @@ async function renderScheduledTasks() {
 async function renderHistoryTasks() {
   try {
     const history = await StorageService.getHistoryTasks();
+    // Sort descending: most recently queried/triggered items first
+    history.sort((a, b) => {
+      const timeA = a.queriedAt || a.triggerTime || 0;
+      const timeB = b.queriedAt || b.triggerTime || 0;
+      return timeB - timeA;
+    });
+
     historyCountBadge.textContent = String(history.length);
 
     if (history.length === 0) {
@@ -407,14 +434,17 @@ async function renderHistoryTasks() {
       chipsContainer.className = 'query-chips';
 
       (item.queries || []).forEach(query => {
+        const isYt = isYoutubeQuery(query, item.engine);
+        const displayText = cleanQueryText(query);
         const chip = document.createElement('span');
-        chip.className = 'query-chip';
+        chip.className = `query-chip ${isYt ? 'youtube' : ''}`;
         chip.innerHTML = `
+          ${isYt ? '<span class="engine-badge youtube">YT</span>' : ''}
           <svg class="query-chip-icon" viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="11" cy="11" r="8"></circle>
             <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
           </svg>
-          <span>${escapeHtml(query)}</span>
+          <span>${escapeHtml(displayText)}</span>
         `;
         chipsContainer.appendChild(chip);
       });
@@ -460,8 +490,11 @@ scheduleForm.addEventListener('submit', async (event) => {
     return;
   }
 
+  const engineRadio = document.querySelector('input[name="searchEngine"]:checked');
+  const engine = engineRadio ? engineRadio.value : 'google';
+
   try {
-    await StorageService.scheduleNewTask(queries, selectedTimestamp);
+    await StorageService.scheduleNewTask(queries, selectedTimestamp, engine);
     queryInput.value = '';
     showStatus(`Scheduled ${queries.length} ${queries.length === 1 ? 'query' : 'queries'} successfully!`, 'success');
     renderAll();
@@ -481,16 +514,24 @@ function escapeHtml(str) {
 }
 
 // Initial setup on DOM ready
-document.addEventListener('DOMContentLoaded', async () => {
+async function init() {
   await initializeScheduleTime();
   await renderAll();
 
   // Storage listener: sync UI across instances
-  chrome.storage.onChanged.addListener((changes, areaName) => {
-    if (areaName === 'local') {
-      if (changes.scheduled_tasks || changes.history_tasks) {
-        renderAll();
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName === 'local') {
+        if (changes.scheduled_tasks || changes.history_tasks) {
+          renderAll();
+        }
       }
-    }
-  });
-});
+    });
+  }
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
