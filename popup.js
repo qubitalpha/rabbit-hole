@@ -102,14 +102,48 @@ function cleanQueryText(query) {
 }
 
 /**
+ * Return the earliest valid scheduled timestamp:
+ * Must be at least 60 seconds in the future AND aligned to the exact minute boundary (:00.000).
+ */
+function getEarliestValidTime() {
+  const minTime = Date.now() + 60000;
+  const target = new Date(minTime);
+  target.setSeconds(0, 0);
+  if (target.getTime() < minTime) {
+    target.setMinutes(target.getMinutes() + 1);
+  }
+  return target.getTime();
+}
+
+/**
+ * Align a timestamp to exact minute boundary (:00.000)
+ * ensuring it is never earlier than getEarliestValidTime().
+ */
+function normalizeScheduledTimestamp(timestamp) {
+  const earliest = getEarliestValidTime();
+  const target = new Date(timestamp);
+  target.setSeconds(0, 0);
+  if (target.getTime() < earliest) {
+    return earliest;
+  }
+  return target.getTime();
+}
+
+/**
+ * Return default scheduled timestamp (15 minutes from now, aligned to minute).
+ */
+function getDefaultScheduleTime() {
+  const earliest = getEarliestValidTime();
+  const defaultTarget = new Date(Date.now() + 15 * 60000);
+  defaultTarget.setSeconds(0, 0);
+  return Math.max(earliest, defaultTarget.getTime());
+}
+
+/**
  * Update the Target Date & Time display elements
  */
 function updateDateTimeDisplay() {
-  const now = Date.now();
-  // Clamped to at least 1 minute from now
-  if (selectedTimestamp < now + 60000) {
-    selectedTimestamp = now + 60000;
-  }
+  selectedTimestamp = normalizeScheduledTimestamp(selectedTimestamp);
   dtDisplayText.textContent = formatDisplayDateTime(selectedTimestamp);
   dtRelativeText.textContent = formatRelativeTime(selectedTimestamp);
 }
@@ -119,11 +153,11 @@ function updateDateTimeDisplay() {
  */
 async function initializeScheduleTime() {
   const lastTime = await StorageService.getLastScheduledTime();
-  const now = Date.now();
-  if (lastTime && lastTime > now + 60000) {
-    selectedTimestamp = lastTime;
+  const earliest = getEarliestValidTime();
+  if (lastTime && lastTime >= earliest) {
+    selectedTimestamp = normalizeScheduledTimestamp(lastTime);
   } else {
-    selectedTimestamp = now + 15 * 60000;
+    selectedTimestamp = getDefaultScheduleTime();
   }
   updateDateTimeDisplay();
 }
@@ -154,9 +188,9 @@ btnDateToday.addEventListener('click', () => {
   const target = new Date();
   target.setHours(current.getHours(), current.getMinutes(), 0, 0);
 
-  // If already past today, set to 15m from now
-  if (target.getTime() <= Date.now()) {
-    selectedTimestamp = Date.now() + 15 * 60000;
+  const earliest = getEarliestValidTime();
+  if (target.getTime() < earliest) {
+    selectedTimestamp = getDefaultScheduleTime();
   } else {
     selectedTimestamp = target.getTime();
   }
@@ -173,7 +207,8 @@ btnDateWeekend.addEventListener('click', () => {
   if (daysUntilSaturday === 0) {
     // Today is Saturday
     target.setHours(current.getHours(), current.getMinutes(), 0, 0);
-    if (target.getTime() <= Date.now()) {
+    const earliest = getEarliestValidTime();
+    if (target.getTime() < earliest) {
       // If already past today's time on Saturday, target next Saturday morning 9am
       target.setDate(target.getDate() + 7);
       target.setHours(9, 0, 0, 0);
@@ -183,30 +218,30 @@ btnDateWeekend.addEventListener('click', () => {
     target.setHours(current.getHours() || 9, current.getMinutes() || 0, 0, 0);
   }
 
-  selectedTimestamp = target.getTime();
+  selectedTimestamp = normalizeScheduledTimestamp(target.getTime());
   updateDateTimeDisplay();
 });
 
 btnDatePlus1.addEventListener('click', () => {
   const target = new Date(selectedTimestamp);
   target.setDate(target.getDate() + 1);
-  selectedTimestamp = target.getTime();
+  target.setSeconds(0, 0);
+  selectedTimestamp = normalizeScheduledTimestamp(target.getTime());
   updateDateTimeDisplay();
 });
 
 btnTimePlus15.addEventListener('click', () => {
-  selectedTimestamp += 15 * 60000;
+  selectedTimestamp = normalizeScheduledTimestamp(selectedTimestamp + 15 * 60000);
   updateDateTimeDisplay();
 });
 
 btnTimeMinus15.addEventListener('click', () => {
-  const minTime = Date.now() + 60000; // Minimum 1 minute in future
-  selectedTimestamp = Math.max(minTime, selectedTimestamp - 15 * 60000);
+  selectedTimestamp = normalizeScheduledTimestamp(selectedTimestamp - 15 * 60000);
   updateDateTimeDisplay();
 });
 
 btnTimePlus60.addEventListener('click', () => {
-  selectedTimestamp += 60 * 60000;
+  selectedTimestamp = normalizeScheduledTimestamp(selectedTimestamp + 60 * 60000);
   updateDateTimeDisplay();
 });
 
@@ -484,9 +519,10 @@ scheduleForm.addEventListener('submit', async (event) => {
     return;
   }
 
-  const now = Date.now();
-  if (selectedTimestamp <= now) {
-    showStatus('Scheduled time must be in the future.', 'error');
+  selectedTimestamp = normalizeScheduledTimestamp(selectedTimestamp);
+  const earliest = getEarliestValidTime();
+  if (selectedTimestamp < earliest) {
+    showStatus('Scheduled time must be at least 1 minute in the future.', 'error');
     return;
   }
 

@@ -256,6 +256,8 @@ describe('Rabbit Hole - Core Regression & Concurrency Tests', () => {
       const { item, newTaskId, triggerTime } = await StorageService.rescheduleHistoryItem('history_item_1', 15);
       assert.ok(newTaskId);
       assert.ok(triggerTime > now);
+      assert.equal(new Date(triggerTime).getSeconds(), 0, 'Trigger time seconds must be 0');
+      assert.equal(new Date(triggerTime).getMilliseconds(), 0, 'Trigger time milliseconds must be 0');
 
       // Verify scheduled task was created with historyOriginId
       const scheduledTasks = await StorageService.getScheduledTasks();

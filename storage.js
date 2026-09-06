@@ -243,7 +243,13 @@ async function rescheduleHistoryItem(historyId, additionalMinutes) {
       await setScheduledTasks(scheduledTasks.filter(t => t.id !== item.scheduledTaskId));
     }
 
-    const triggerTime = Date.now() + additionalMinutes * 60 * 1000;
+    const now = Date.now();
+    const target = new Date(now + additionalMinutes * 60 * 1000);
+    target.setSeconds(0, 0);
+    if (target.getTime() < now + 60000) {
+      target.setMinutes(target.getMinutes() + 1);
+    }
+    const triggerTime = target.getTime();
     const newTaskId = generateTaskId();
 
     const scheduledTasks = await getScheduledTasks();
