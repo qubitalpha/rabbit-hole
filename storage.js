@@ -5,10 +5,12 @@
 const STORAGE_KEYS = {
   SCHEDULED_TASKS: 'scheduled_tasks',
   HISTORY_TASKS: 'history_tasks',
-  LAST_SCHEDULED_TIME: 'last_scheduled_time'
+  LAST_SCHEDULED_TIME: 'last_scheduled_time',
+  LAST_SELECTED_ENGINE: 'last_selected_engine'
 };
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+const HISTORY_CLEANUP_ALARM = 'rabbit_hole_history_cleanup';
 
 // Internal promise queue ensuring atomic read-modify-write operations
 let _storageLock = Promise.resolve();
@@ -59,6 +61,44 @@ async function getHistoryTasks() {
 }
 
 /**
+ * Remove expired history and schedule the next exact expiry.  This lets
+ * history disappear even when the popup is never opened.
+ */
+async function pruneHistoryTasks() {
+  return withStorageLock(async () => {
+    const data = await chrome.storage.local.get(STORAGE_KEYS.HISTORY_TASKS);
+    const history = Array.isArray(data[STORAGE_KEYS.HISTORY_TASKS])
+      ? data[STORAGE_KEYS.HISTORY_TASKS]
+      : [];
+    const now = Date.now();
+    const validHistory = history.filter(item => {
+      if (!item) return false;
+      if (item.scheduledTaskId && item.nextTriggerTime && item.nextTriggerTime > now) return true;
+      const timestamp = item.queriedAt || item.triggerTime || now;
+      return (now - timestamp) < ONE_DAY_MS;
+    });
+    if (validHistory.length !== history.length) await setHistoryTasks(validHistory);
+    await scheduleHistoryCleanup(validHistory);
+    return validHistory;
+  });
+}
+
+/** Schedule a one-off alarm for the next completed-history expiry. */
+async function scheduleHistoryCleanup(history) {
+  if (!chrome.alarms) return;
+  const now = Date.now();
+  const expiryTimes = history
+    .filter(item => !(item.scheduledTaskId && item.nextTriggerTime && item.nextTriggerTime > now))
+    .map(item => (item.queriedAt || item.triggerTime || now) + ONE_DAY_MS)
+    .filter(time => time > now);
+
+  await chrome.alarms.clear(HISTORY_CLEANUP_ALARM);
+  if (expiryTimes.length > 0) {
+    await chrome.alarms.create(HISTORY_CLEANUP_ALARM, { when: Math.min(...expiryTimes) });
+  }
+}
+
+/**
  * Save history tasks to storage
  */
 async function setHistoryTasks(tasks) {
@@ -81,6 +121,41 @@ async function setLastScheduledTime(timestamp) {
 }
 
 /**
+ * Get the last selected search engine
+ */
+async function getLastSelectedEngine() {
+  const data = await chrome.storage.local.get(STORAGE_KEYS.LAST_SELECTED_ENGINE);
+  return data[STORAGE_KEYS.LAST_SELECTED_ENGINE] || 'google';
+}
+
+/**
+ * Persist the last selected search engine
+ */
+async function setLastSelectedEngine(engine) {
+  await chrome.storage.local.set({ [STORAGE_KEYS.LAST_SELECTED_ENGINE]: engine || 'google' });
+}
+
+/**
+ * Detect engine from queries if not explicitly specified as youtube
+ */
+function resolveEngine(engine, queries) {
+  if (engine === 'youtube') return 'youtube';
+  if (Array.isArray(queries) && queries.length > 0) {
+    const hasYoutubeQuery = queries.some(q => {
+      if (typeof q !== 'string') return false;
+      const trimmed = q.trim();
+      return /^(?:yt|youtube)(?::|\s+)/i.test(trimmed) ||
+             /^(?:yt|youtube)$/i.test(trimmed) ||
+             /^(?:https?:\/\/)?(?:www\.|m\.)?(?:youtube\.com|youtu\.be)\//i.test(trimmed);
+    });
+    if (hasYoutubeQuery && (!engine || engine === 'google')) {
+      return 'youtube';
+    }
+  }
+  return engine || 'google';
+}
+
+/**
  * Generate a unique task identifier
  */
 function generateTaskId() {
@@ -94,18 +169,20 @@ function generateTaskId() {
 async function scheduleNewTask(queries, triggerTime, engine = 'google') {
   return withStorageLock(async () => {
     const taskId = generateTaskId();
+    const resolvedEngine = resolveEngine(engine, queries);
 
     const tasks = await getScheduledTasks();
     const newTask = {
       id: taskId,
       queries,
-      engine: engine || 'google',
+      engine: resolvedEngine,
       triggerTime,
       createdAt: Date.now()
     };
     tasks.push(newTask);
     await setScheduledTasks(tasks);
     await setLastScheduledTime(triggerTime);
+    await setLastSelectedEngine(engine || resolvedEngine);
 
     // Register alarm AFTER task data is persisted
     await chrome.alarms.create(taskId, { when: triggerTime });
@@ -190,8 +267,24 @@ async function moveScheduledTaskToHistory(alarmName) {
       [STORAGE_KEYS.SCHEDULED_TASKS]: scheduledTasks,
       [STORAGE_KEYS.HISTORY_TASKS]: history
     });
+    await scheduleHistoryCleanup(history);
 
     return task;
+  });
+}
+
+/** Remove completed history items by ID. */
+async function removeHistoryItems(historyIds) {
+  return withStorageLock(async () => {
+    const ids = new Set(historyIds);
+    if (ids.size === 0) return [];
+
+    const history = await getHistoryTasks();
+    const removed = history.filter(item => ids.has(item.id) && !item.scheduledTaskId);
+    const remaining = history.filter(item => !ids.has(item.id) || item.scheduledTaskId);
+    await setHistoryTasks(remaining);
+    await scheduleHistoryCleanup(remaining);
+    return removed;
   });
 }
 
@@ -252,11 +345,13 @@ async function rescheduleHistoryItem(historyId, additionalMinutes) {
     const triggerTime = target.getTime();
     const newTaskId = generateTaskId();
 
+    const resolvedEngine = resolveEngine(item.engine, item.queries);
+
     const scheduledTasks = await getScheduledTasks();
     scheduledTasks.push({
       id: newTaskId,
       queries: item.queries,
-      engine: item.engine || 'google',
+      engine: resolvedEngine,
       triggerTime,
       createdAt: Date.now(),
       historyOriginId: historyId
@@ -299,15 +394,21 @@ async function cancelRescheduledHistoryItem(historyId) {
 const StorageService = {
   STORAGE_KEYS,
   ONE_DAY_MS,
+  HISTORY_CLEANUP_ALARM,
   withStorageLock,
   getScheduledTasks,
   setScheduledTasks,
   getHistoryTasks,
+  pruneHistoryTasks,
   setHistoryTasks,
   getLastScheduledTime,
   setLastScheduledTime,
+  getLastSelectedEngine,
+  setLastSelectedEngine,
+  resolveEngine,
   scheduleNewTask,
   moveScheduledTaskToHistory,
+  removeHistoryItems,
   cancelScheduledTask,
   rescheduleHistoryItem,
   cancelRescheduledHistoryItem

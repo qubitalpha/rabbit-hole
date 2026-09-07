@@ -99,6 +99,33 @@ describe('Rabbit Hole - Core Regression & Concurrency Tests', () => {
       assert.equal(url, 'https://www.youtube.com/results?search_query=space%20documentary');
     });
 
+    test('overrides default engine with yt space prefix (no colon)', () => {
+      const url = getSearchUrl('yt coding tutorial in python', 'google');
+      assert.equal(url, 'https://www.youtube.com/results?search_query=coding%20tutorial%20in%20python');
+    });
+
+    test('overrides default engine with youtube space prefix (no colon)', () => {
+      const url = getSearchUrl('youtube space documentary', 'google');
+      assert.equal(url, 'https://www.youtube.com/results?search_query=space%20documentary');
+    });
+
+    test('opens bare youtube and video URLs directly as https', () => {
+      assert.equal(getSearchUrl('youtube.com/watch?v=dQw4w9WgXcQ'), 'https://youtube.com/watch?v=dQw4w9WgXcQ');
+      assert.equal(getSearchUrl('www.youtube.com/results?search_query=test'), 'https://www.youtube.com/results?search_query=test');
+      assert.equal(getSearchUrl('youtu.be/dQw4w9WgXcQ'), 'https://youtu.be/dQw4w9WgXcQ');
+    });
+
+    test('routes standalone yt or youtube keywords to YouTube home', () => {
+      assert.equal(getSearchUrl('yt'), 'https://www.youtube.com');
+      assert.equal(getSearchUrl('YouTube'), 'https://www.youtube.com');
+    });
+
+    test('routes g: or google: prefixes to Google search', () => {
+      assert.equal(getSearchUrl('g: artificial intelligence', 'youtube'), 'https://www.google.com/search?q=artificial%20intelligence');
+      assert.equal(getSearchUrl('google machine learning', 'youtube'), 'https://www.google.com/search?q=machine%20learning');
+      assert.equal(getSearchUrl('google'), 'https://www.google.com');
+    });
+
     test('preserves direct HTTP and HTTPS URLs', () => {
       const httpsUrl = getSearchUrl('https://github.com/trending');
       assert.equal(httpsUrl, 'https://github.com/trending');
@@ -140,6 +167,33 @@ describe('Rabbit Hole - Core Regression & Concurrency Tests', () => {
       assert.deepEqual(history[0].queries, ['quantum computing']);
       assert.equal(history[0].engine, 'google');
       assert.ok(history[0].queriedAt);
+    });
+  });
+
+  describe('History retention and clearing', () => {
+    test('prunes expired completed history and schedules cleanup for the next item', async () => {
+      const now = Date.now();
+      await StorageService.setHistoryTasks([
+        { id: 'expired', queries: ['old'], queriedAt: now - StorageService.ONE_DAY_MS - 1 },
+        { id: 'current', queries: ['new'], queriedAt: now - 1000 }
+      ]);
+
+      const history = await StorageService.pruneHistoryTasks();
+      assert.deepEqual(history.map(item => item.id), ['current']);
+      assert.ok(global.chrome.alarms._alarms.has(StorageService.HISTORY_CLEANUP_ALARM));
+    });
+
+    test('removes only the selected completed history items', async () => {
+      const now = Date.now();
+      await StorageService.setHistoryTasks([
+        { id: 'remove-me', queries: ['a'], queriedAt: now },
+        { id: 'keep-me', queries: ['b'], queriedAt: now }
+      ]);
+
+      const removed = await StorageService.removeHistoryItems(['remove-me']);
+      assert.deepEqual(removed.map(item => item.id), ['remove-me']);
+      const remaining = await StorageService.getHistoryTasks();
+      assert.deepEqual(remaining.map(item => item.id), ['keep-me']);
     });
   });
 
@@ -276,6 +330,40 @@ describe('Rabbit Hole - Core Regression & Concurrency Tests', () => {
     });
   });
 
+  describe('Engine Persistence & Smart Resolution', () => {
+    test('persists and retrieves last selected search engine', async () => {
+      assert.equal(await StorageService.getLastSelectedEngine(), 'google');
+      await StorageService.setLastSelectedEngine('youtube');
+      assert.equal(await StorageService.getLastSelectedEngine(), 'youtube');
+      await StorageService.setLastSelectedEngine('google');
+      assert.equal(await StorageService.getLastSelectedEngine(), 'google');
+    });
+
+    test('auto-detects youtube engine when scheduling tasks with youtube prefixes', async () => {
+      const task = await StorageService.scheduleNewTask(['yt lofi chill'], Date.now() + 60000, 'google');
+      assert.equal(task.engine, 'youtube');
+    });
+
+    test('preserves youtube engine when rescheduling history item without explicit engine', async () => {
+      const now = Date.now();
+      await chrome.storage.local.set({
+        [StorageService.STORAGE_KEYS.HISTORY_TASKS]: [
+          {
+            id: 'yt_history_1',
+            queries: ['youtube: interstellar soundtrack'],
+            queriedAt: now - 3600000
+          }
+        ]
+      });
+
+      const { newTaskId } = await StorageService.rescheduleHistoryItem('yt_history_1', 15);
+      const scheduledTasks = await StorageService.getScheduledTasks();
+      const task = scheduledTasks.find(t => t.id === newTaskId);
+      assert.ok(task);
+      assert.equal(task.engine, 'youtube');
+    });
+  });
+
   describe('Task Cancellation', () => {
     test('cancelling a scheduled task removes it from storage and clears alarm', async () => {
       const task = await StorageService.scheduleNewTask(['cancel test'], Date.now() + 60000);
@@ -289,4 +377,3 @@ describe('Rabbit Hole - Core Regression & Concurrency Tests', () => {
     });
   });
 });
-

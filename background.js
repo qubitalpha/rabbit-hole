@@ -16,13 +16,46 @@ function getSearchUrl(query, defaultEngine = 'google') {
   if (!query) return '';
   const trimmed = query.trim();
   if (!trimmed) return '';
+
+  // Direct protocol URL (http:// or https://)
   if (/^https?:\/\//i.test(trimmed)) {
     return trimmed;
   }
-  if (/^(?:yt|youtube):/i.test(trimmed)) {
-    const cleanQuery = trimmed.replace(/^(?:yt|youtube):\s*/i, '');
+
+  // Bare domain URL (e.g. youtube.com/watch?v=..., youtu.be/..., github.com, etc.)
+  if (/^(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/.*)?$/i.test(trimmed)) {
+    return 'https://' + trimmed;
+  }
+
+  // Explicit YouTube prefix: yt: query, youtube: query, yt query, youtube query
+  if (/^(?:yt|youtube)(?::|\s+)/i.test(trimmed)) {
+    const cleanQuery = trimmed.replace(/^(?:yt|youtube)(?::|\s*)/i, '').trim();
+    if (!cleanQuery) {
+      return 'https://www.youtube.com';
+    }
     return 'https://www.youtube.com/results?search_query=' + encodeURIComponent(cleanQuery);
   }
+
+  // Pure keyword "yt" or "youtube"
+  if (/^(?:yt|youtube)$/i.test(trimmed)) {
+    return 'https://www.youtube.com';
+  }
+
+  // Explicit Google prefix: g: query, google: query, g query, google query
+  if (/^(?:google|g)(?::|\s+)/i.test(trimmed)) {
+    const cleanQuery = trimmed.replace(/^(?:google|g)(?::|\s+)/i, '').trim();
+    if (!cleanQuery) {
+      return 'https://www.google.com';
+    }
+    return 'https://www.google.com/search?q=' + encodeURIComponent(cleanQuery);
+  }
+
+  // Pure keyword "g" or "google"
+  if (/^(?:google|g)$/i.test(trimmed)) {
+    return 'https://www.google.com';
+  }
+
+  // Fallback to default engine
   if (defaultEngine === 'youtube') {
     return 'https://www.youtube.com/results?search_query=' + encodeURIComponent(trimmed);
   }
@@ -52,6 +85,11 @@ async function executeQueries(queries, defaultEngine = 'google') {
 if (typeof chrome !== 'undefined' && chrome.alarms && chrome.alarms.onAlarm) {
   chrome.alarms.onAlarm.addListener(async (alarm) => {
     try {
+      if (alarm.name === StorageService.HISTORY_CLEANUP_ALARM) {
+        await StorageService.pruneHistoryTasks();
+        return;
+      }
+
       // Atomically move the task from scheduled queue into 24h history
       const task = await StorageService.moveScheduledTaskToHistory(alarm.name);
       if (!task) {
@@ -80,6 +118,11 @@ if (typeof chrome !== 'undefined' && chrome.alarms && chrome.alarms.onAlarm) {
     } catch (error) {
       console.error('[rabbit-hole] Error handling alarm execution:', error);
     }
+  });
+
+  // Restore the cleanup alarm after service-worker restarts or extension updates.
+  StorageService.pruneHistoryTasks().catch((error) => {
+    console.error('[rabbit-hole] Error scheduling history cleanup:', error);
   });
 }
 

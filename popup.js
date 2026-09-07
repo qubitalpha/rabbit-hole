@@ -24,12 +24,28 @@ const scheduledSection = document.getElementById('scheduledSection');
 const historySection = document.getElementById('historySection');
 const scheduledTaskList = document.getElementById('scheduledTaskList');
 const historyTaskList = document.getElementById('historyTaskList');
+const historyToolbar = document.getElementById('historyToolbar');
+const selectAllHistory = document.getElementById('selectAllHistory');
+const clearAllHistory = document.getElementById('clearAllHistory');
 const scheduledCountBadge = document.getElementById('scheduledCountBadge');
 const historyCountBadge = document.getElementById('historyCountBadge');
 
 let bannerTimeoutId = null;
 let selectedTimestamp = Date.now() + 15 * 60 * 1000;
 let activeTab = 'scheduled'; // 'scheduled' | 'history'
+const selectedHistoryIds = new Set();
+
+function updateHistoryBulkControls(items) {
+  const completedItems = items.filter(item => !item.scheduledTaskId);
+  const completedIds = new Set(completedItems.map(item => item.id));
+  [...selectedHistoryIds].forEach(id => {
+    if (!completedIds.has(id)) selectedHistoryIds.delete(id);
+  });
+  selectAllHistory.checked = completedItems.length > 0 && selectedHistoryIds.size === completedItems.length;
+  selectAllHistory.indeterminate = selectedHistoryIds.size > 0 && !selectAllHistory.checked;
+  selectAllHistory.disabled = completedItems.length === 0;
+  clearAllHistory.disabled = selectedHistoryIds.size === 0;
+}
 
 /**
  * Format timestamp into display date & time
@@ -88,8 +104,11 @@ function formatRelativeTime(timestamp) {
  * Check if query or task targets YouTube
  */
 function isYoutubeQuery(query, taskEngine) {
-  if (typeof query !== 'string') return false;
-  if (/^(?:yt|youtube):/i.test(query.trim())) return true;
+  if (typeof query !== 'string') return taskEngine === 'youtube';
+  const trimmed = query.trim();
+  if (/^(?:yt|youtube)(?::|\s+)/i.test(trimmed)) return true;
+  if (/^(?:yt|youtube)$/i.test(trimmed)) return true;
+  if (/^(?:https?:\/\/)?(?:www\.|m\.)?(?:youtube\.com|youtu\.be)\//i.test(trimmed)) return true;
   return taskEngine === 'youtube';
 }
 
@@ -98,7 +117,7 @@ function isYoutubeQuery(query, taskEngine) {
  */
 function cleanQueryText(query) {
   if (typeof query !== 'string') return '';
-  return query.trim().replace(/^(?:yt|youtube):\s*/i, '');
+  return query.trim().replace(/^(?:youtube|yt|google|g)(?::|\s*)/i, '').trim();
 }
 
 /**
@@ -373,6 +392,8 @@ async function renderHistoryTasks() {
     });
 
     historyCountBadge.textContent = String(history.length);
+    historyToolbar.classList.toggle('hidden', history.length === 0);
+    updateHistoryBulkControls(history);
 
     if (history.length === 0) {
       historyTaskList.innerHTML = `
@@ -394,6 +415,7 @@ async function renderHistoryTasks() {
     history.forEach(item => {
       const card = document.createElement('div');
       card.className = 'task-card history-card';
+      card.dataset.historyId = item.id;
 
       const cardHeader = document.createElement('div');
       cardHeader.className = 'task-card-header';
@@ -435,7 +457,17 @@ async function renderHistoryTasks() {
         });
         actionContainer.appendChild(cancelBtn);
       } else {
-        // +15m and +1h buttons
+        const selectControl = document.createElement('input');
+        selectControl.type = 'checkbox';
+        selectControl.className = 'history-select';
+        selectControl.checked = selectedHistoryIds.has(item.id);
+        selectControl.setAttribute('aria-label', 'Select finished task');
+        selectControl.addEventListener('change', () => {
+          if (selectControl.checked) selectedHistoryIds.add(item.id);
+          else selectedHistoryIds.delete(item.id);
+          updateHistoryBulkControls(history);
+        });
+
         const plus15Btn = document.createElement('button');
         plus15Btn.type = 'button';
         plus15Btn.className = 'btn-reschedule';
@@ -447,19 +479,21 @@ async function renderHistoryTasks() {
           renderAll();
         });
 
-        const plus60Btn = document.createElement('button');
-        plus60Btn.type = 'button';
-        plus60Btn.className = 'btn-reschedule';
-        plus60Btn.textContent = '+1h';
-        plus60Btn.title = 'Reschedule 1 hour from now';
-        plus60Btn.addEventListener('click', async () => {
-          await StorageService.rescheduleHistoryItem(item.id, 60);
-          showStatus('Rescheduled for 1 hour from now.', 'success');
+        const clearBtn = document.createElement('button');
+        clearBtn.type = 'button';
+        clearBtn.className = 'btn-cancel';
+        clearBtn.textContent = 'Clear';
+        clearBtn.title = 'Remove finished task from history';
+        clearBtn.addEventListener('click', async () => {
+          await StorageService.removeHistoryItems([item.id]);
+          selectedHistoryIds.delete(item.id);
+          showStatus('Finished task cleared.', 'success');
           renderAll();
         });
 
+        actionContainer.appendChild(selectControl);
         actionContainer.appendChild(plus15Btn);
-        actionContainer.appendChild(plus60Btn);
+        actionContainer.appendChild(clearBtn);
       }
 
       cardHeader.appendChild(timeSpan);
@@ -493,6 +527,25 @@ async function renderHistoryTasks() {
     showStatus('Failed to load history.', 'error');
   }
 }
+
+selectAllHistory.addEventListener('change', () => {
+  historyTaskList.querySelectorAll('.history-select').forEach(control => {
+    control.checked = selectAllHistory.checked;
+    const cardId = control.closest('.task-card').dataset.historyId;
+    if (selectAllHistory.checked) selectedHistoryIds.add(cardId);
+    else selectedHistoryIds.delete(cardId);
+  });
+  clearAllHistory.disabled = selectedHistoryIds.size === 0;
+  selectAllHistory.indeterminate = false;
+});
+
+clearAllHistory.addEventListener('click', async () => {
+  const count = selectedHistoryIds.size;
+  await StorageService.removeHistoryItems([...selectedHistoryIds]);
+  selectedHistoryIds.clear();
+  showStatus(`${count} finished ${count === 1 ? 'task' : 'tasks'} cleared.`, 'success');
+  renderAll();
+});
 
 /**
  * Re-render both views
@@ -552,6 +605,30 @@ function escapeHtml(str) {
 // Initial setup on DOM ready
 async function init() {
   await initializeScheduleTime();
+
+  // Restore last selected search engine preference
+  try {
+    const savedEngine = await StorageService.getLastSelectedEngine();
+    if (savedEngine) {
+      const radio = document.querySelector(`input[name="searchEngine"][value="${savedEngine}"]`);
+      if (radio) {
+        radio.checked = true;
+      }
+    }
+  } catch (e) {
+    console.warn('Could not load saved search engine:', e);
+  }
+
+  // Persist search engine selection when changed
+  const engineRadios = document.querySelectorAll('input[name="searchEngine"]');
+  engineRadios.forEach(radio => {
+    radio.addEventListener('change', () => {
+      if (radio.checked) {
+        StorageService.setLastSelectedEngine(radio.value);
+      }
+    });
+  });
+
   await renderAll();
 
   // Storage listener: sync UI across instances

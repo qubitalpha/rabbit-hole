@@ -25,15 +25,15 @@
       <div class="form-group">
         <label class="form-label">Search Engine</label>
         <div class="engine-selector" role="radiogroup" aria-label="Search Engine">
-          <label class="engine-option">
-            <input type="radio" name="searchEngine" value="google" checked class="engine-radio">
+          <label class="engine-option" for="engineGoogle">
+            <input type="radio" id="engineGoogle" name="searchEngine" value="google" checked class="engine-radio">
             <span class="engine-chip google">
               <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
               Google
             </span>
           </label>
-          <label class="engine-option">
-            <input type="radio" name="searchEngine" value="youtube" class="engine-radio">
+          <label class="engine-option" for="engineYoutube">
+            <input type="radio" id="engineYoutube" name="searchEngine" value="youtube" class="engine-radio">
             <span class="engine-chip youtube">
               <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
               YouTube
@@ -45,7 +45,7 @@
       <div class="form-group">
         <label for="queryInput" class="form-label">
           Search Queries
-          <span class="label-hint">(one per line, yt: prefix supported)</span>
+          <span class="label-hint">(one per line; yt: or youtube: prefix supported)</span>
         </label>
         <textarea
           id="queryInput"
@@ -108,7 +108,7 @@
         <span id="scheduledCountBadge" class="tab-badge">0</span>
       </button>
       <button type="button" id="tabBtnHistory" class="tab-btn" role="tab" aria-selected="false" aria-controls="historySection">
-        <span>History (24h)</span>
+        <span>History</span>
         <span id="historyCountBadge" class="tab-badge">0</span>
       </button>
     </nav>
@@ -122,6 +122,13 @@
 
     <!-- History Tasks List Section -->
     <section id="historySection" class="tasks-section hidden" role="tabpanel" aria-labelledby="tabBtnHistory">
+      <div id="historyToolbar" class="history-toolbar hidden">
+        <label class="select-all-control">
+          <input type="checkbox" id="selectAllHistory" aria-label="Select all finished tasks">
+          <span>Select all</span>
+        </label>
+        <button type="button" id="clearAllHistory" class="btn-clear-all" disabled>Clear all</button>
+      </div>
       <div id="historyTaskList" class="task-list">
         <!-- Rendered dynamically -->
       </div>
