@@ -4,6 +4,8 @@ A lightweight, powerful Google Chrome / Chromium extension built with standard M
 
 Supports both **Google Search** and **YouTube Search**, intelligent prefix detection, synced schedules across Chrome devices, a 24-hour history with automatic expiration, ergonomic quick-time buttons, and desktop notifications.
 
+> **Development-only stable extension ID:** `manifest.json` contains a public `key` so separately loaded unpacked copies use the same extension ID and share Chrome Sync data. The private key is intentionally not stored. If rabbit-hole is published to the Chrome Web Store, replace this key with the public key assigned by the Web Store package before release.
+
 ---
 
 ## Key Features

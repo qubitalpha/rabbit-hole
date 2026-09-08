@@ -3,6 +3,7 @@
   "name": "rabbit-hole",
   "version": "1.0.0",
   "description": "schedule Google search queries to automatically open at specified dates and times.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs5LbpTXwE+OwOCrZgscA8eQlw3stLZY0ggNVuHZSRgmxm+5YY0lpZWREzy8TfRt1Z/qEgSpncQxkx5wAXV/AIRX4dfCzDYhPtGuF1CUcVWUDSinVFLyl9ZajSQhEkCFu32ihQJUQo8HdtZ2hz5y/eGrzu/GvhdW991wfr6T8Dvt7JkuJYTXNp4nSSc3pZwcbdOf4oTLeZFQyLhwQunwQnLdvfWEUdt3lbDUfd/Rl25v5Re84W4O+sSsM1MkAIwLh2AV6H9Bfg4oX3sNApnhRa2gJEG0xv3oaRLbY/7GbA706hmAVtE5FV9HKCOagz/vRWWERyVp7nL+eqAN57jq9MwIDAQAB",
   "permissions": [
     "storage",
     "alarms",
@@ -28,4 +29,3 @@
     "service_worker": "background.js"
   }
 }
-
