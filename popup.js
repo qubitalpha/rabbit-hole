@@ -296,7 +296,8 @@ tabBtnHistory.addEventListener('click', () => switchTab('history'));
  */
 async function renderScheduledTasks() {
   try {
-    const tasks = await StorageService.getScheduledTasks();
+    const tasks = (await StorageService.getScheduledTasks())
+      .filter(task => task.triggerTime > Date.now());
     tasks.sort((a, b) => a.triggerTime - b.triggerTime);
 
     scheduledCountBadge.textContent = String(tasks.length);
@@ -634,10 +635,9 @@ async function init() {
   // Storage listener: sync UI across instances
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
     chrome.storage.onChanged.addListener((changes, areaName) => {
-      if (areaName === 'local') {
-        if (changes.scheduled_tasks || changes.history_tasks) {
-          renderAll();
-        }
+      if ((areaName === 'local' && changes.history_tasks) ||
+          (areaName === 'sync' && changes.scheduled_tasks)) {
+        renderAll();
       }
     });
   }

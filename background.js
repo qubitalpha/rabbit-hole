@@ -86,6 +86,7 @@ if (typeof chrome !== 'undefined' && chrome.alarms && chrome.alarms.onAlarm) {
   chrome.alarms.onAlarm.addListener(async (alarm) => {
     try {
       if (alarm.name === StorageService.HISTORY_CLEANUP_ALARM) {
+        await StorageService.pruneExpiredScheduledTasks();
         await StorageService.pruneHistoryTasks();
         return;
       }
@@ -120,10 +121,26 @@ if (typeof chrome !== 'undefined' && chrome.alarms && chrome.alarms.onAlarm) {
     }
   });
 
-  // Restore the cleanup alarm after service-worker restarts or extension updates.
-  StorageService.pruneHistoryTasks().catch((error) => {
-    console.error('[rabbit-hole] Error scheduling history cleanup:', error);
+  // Restore device-local alarms after service-worker restarts and import tasks
+  // created before sync support was introduced.
+  (async () => {
+    await StorageService.migrateScheduledTasksToSync();
+    await StorageService.pruneExpiredScheduledTasks();
+    await StorageService.restoreScheduledAlarms();
+    await StorageService.pruneHistoryTasks();
+  })().catch((error) => {
+    console.error('[rabbit-hole] Error restoring synced tasks:', error);
   });
+
+  if (chrome.storage && chrome.storage.onChanged) {
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName === 'sync' && changes[StorageService.STORAGE_KEYS.SCHEDULED_TASKS]) {
+        StorageService.restoreScheduledAlarms().catch((error) => {
+          console.error('[rabbit-hole] Error applying synced task changes:', error);
+        });
+      }
+    });
+  }
 }
 
 /**

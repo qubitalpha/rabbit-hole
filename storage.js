@@ -5,12 +5,14 @@
 const STORAGE_KEYS = {
   SCHEDULED_TASKS: 'scheduled_tasks',
   HISTORY_TASKS: 'history_tasks',
+  SCHEDULED_TASKS_SYNC_MIGRATED: 'scheduled_tasks_sync_migrated',
   LAST_SCHEDULED_TIME: 'last_scheduled_time',
   LAST_SELECTED_ENGINE: 'last_selected_engine'
 };
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const HISTORY_CLEANUP_ALARM = 'rabbit_hole_history_cleanup';
+const TASK_ALARM_PREFIX = 'query_alarm_';
 
 // Internal promise queue ensuring atomic read-modify-write operations
 let _storageLock = Promise.resolve();
@@ -22,10 +24,11 @@ function withStorageLock(fn) {
 }
 
 /**
- * Fetch scheduled tasks from storage
+ * Fetch shared scheduled tasks. Task definitions sync between Chrome profiles;
+ * execution history remains local to each device.
  */
 async function getScheduledTasks() {
-  const data = await chrome.storage.local.get(STORAGE_KEYS.SCHEDULED_TASKS);
+  const data = await chrome.storage.sync.get(STORAGE_KEYS.SCHEDULED_TASKS);
   const tasks = data[STORAGE_KEYS.SCHEDULED_TASKS];
   return Array.isArray(tasks) ? tasks : [];
 }
@@ -34,7 +37,55 @@ async function getScheduledTasks() {
  * Save scheduled tasks to storage
  */
 async function setScheduledTasks(tasks) {
-  await chrome.storage.local.set({ [STORAGE_KEYS.SCHEDULED_TASKS]: tasks });
+  await chrome.storage.sync.set({ [STORAGE_KEYS.SCHEDULED_TASKS]: tasks });
+}
+
+/** Copy existing pre-sync tasks once, without overwriting tasks from another device. */
+async function migrateScheduledTasksToSync() {
+  return withStorageLock(async () => {
+    const [localData, syncData] = await Promise.all([
+      chrome.storage.local.get([
+        STORAGE_KEYS.SCHEDULED_TASKS,
+        STORAGE_KEYS.SCHEDULED_TASKS_SYNC_MIGRATED
+      ]),
+      chrome.storage.sync.get(STORAGE_KEYS.SCHEDULED_TASKS)
+    ]);
+    if (localData[STORAGE_KEYS.SCHEDULED_TASKS_SYNC_MIGRATED]) {
+      return Array.isArray(syncData[STORAGE_KEYS.SCHEDULED_TASKS])
+        ? syncData[STORAGE_KEYS.SCHEDULED_TASKS]
+        : [];
+    }
+    const localTasks = Array.isArray(localData[STORAGE_KEYS.SCHEDULED_TASKS])
+      ? localData[STORAGE_KEYS.SCHEDULED_TASKS]
+      : [];
+    const syncTasks = Array.isArray(syncData[STORAGE_KEYS.SCHEDULED_TASKS])
+      ? syncData[STORAGE_KEYS.SCHEDULED_TASKS]
+      : [];
+    const merged = [...syncTasks];
+    const knownIds = new Set(syncTasks.map(task => task.id));
+    localTasks.forEach(task => {
+      if (!knownIds.has(task.id)) merged.push(task);
+    });
+    if (merged.length !== syncTasks.length) await setScheduledTasks(merged);
+    await chrome.storage.local.set({ [STORAGE_KEYS.SCHEDULED_TASKS_SYNC_MIGRATED]: true });
+    return merged;
+  });
+}
+
+/** Recreate this device's alarms from the shared task list. */
+async function restoreScheduledAlarms() {
+  const tasks = await getScheduledTasks();
+  const now = Date.now();
+  const activeTasks = tasks.filter(task => task && task.triggerTime > now);
+  const desiredIds = new Set(activeTasks.map(task => task.id));
+  const alarms = await chrome.alarms.getAll();
+
+  await Promise.all(alarms
+    .filter(alarm => alarm.name.startsWith(TASK_ALARM_PREFIX) && !desiredIds.has(alarm.name))
+    .map(alarm => chrome.alarms.clear(alarm.name)));
+  await Promise.all(activeTasks
+    .filter(task => !alarms.some(alarm => alarm.name === task.id))
+    .map(task => chrome.alarms.create(task.id, { when: task.triggerTime, persistAcrossSessions: true })));
 }
 
 /**
@@ -83,14 +134,30 @@ async function pruneHistoryTasks() {
   });
 }
 
+/** Remove shared task definitions one day after their scheduled time. */
+async function pruneExpiredScheduledTasks() {
+  return withStorageLock(async () => {
+    const now = Date.now();
+    const tasks = await getScheduledTasks();
+    const validTasks = tasks.filter(task => task && task.triggerTime >= now - ONE_DAY_MS);
+    if (validTasks.length !== tasks.length) await setScheduledTasks(validTasks);
+    await scheduleHistoryCleanup([]);
+    return validTasks;
+  });
+}
+
 /** Schedule a one-off alarm for the next completed-history expiry. */
 async function scheduleHistoryCleanup(history) {
   if (!chrome.alarms) return;
   const now = Date.now();
-  const expiryTimes = history
+  const historyExpiryTimes = history
     .filter(item => !(item.scheduledTaskId && item.nextTriggerTime && item.nextTriggerTime > now))
     .map(item => (item.queriedAt || item.triggerTime || now) + ONE_DAY_MS)
     .filter(time => time > now);
+  const scheduledExpiryTimes = (await getScheduledTasks())
+    .filter(task => task && task.triggerTime + ONE_DAY_MS > now)
+    .map(task => task.triggerTime + ONE_DAY_MS);
+  const expiryTimes = [...historyExpiryTimes, ...scheduledExpiryTimes];
 
   await chrome.alarms.clear(HISTORY_CLEANUP_ALARM);
   if (expiryTimes.length > 0) {
@@ -183,36 +250,30 @@ async function scheduleNewTask(queries, triggerTime, engine = 'google') {
     await setScheduledTasks(tasks);
     await setLastScheduledTime(triggerTime);
     await setLastSelectedEngine(engine || resolvedEngine);
+    await scheduleHistoryCleanup([]);
 
     // Register alarm AFTER task data is persisted
-    await chrome.alarms.create(taskId, { when: triggerTime });
+    await chrome.alarms.create(taskId, { when: triggerTime, persistAcrossSessions: true });
 
     return newTask;
   });
 }
 
 /**
- * Atomically move an executed task from scheduled queue into 24-hour history.
- * Persists BOTH scheduled_tasks and history_tasks in a single atomic storage write.
+ * Record an execution in this device's 24-hour history. The shared task stays
+ * available so every other active device can execute its own local alarm.
  */
 async function moveScheduledTaskToHistory(alarmName) {
   return withStorageLock(async () => {
-    const data = await chrome.storage.local.get([
-      STORAGE_KEYS.SCHEDULED_TASKS,
-      STORAGE_KEYS.HISTORY_TASKS
+    const [scheduledTasks, data] = await Promise.all([
+      getScheduledTasks(),
+      chrome.storage.local.get(STORAGE_KEYS.HISTORY_TASKS)
     ]);
-
-    const scheduledTasks = Array.isArray(data[STORAGE_KEYS.SCHEDULED_TASKS])
-      ? data[STORAGE_KEYS.SCHEDULED_TASKS]
-      : [];
-    const taskIndex = scheduledTasks.findIndex((t) => t.id === alarmName);
-
-    if (taskIndex === -1) {
+    const task = scheduledTasks.find((t) => t.id === alarmName);
+    if (!task) {
       console.warn(`[rabbit-hole] No matching task found for alarm: ${alarmName}`);
       return null;
     }
-
-    const [task] = scheduledTasks.splice(taskIndex, 1);
     const now = Date.now();
 
     const rawHistory = Array.isArray(data[STORAGE_KEYS.HISTORY_TASKS])
@@ -228,6 +289,11 @@ async function moveScheduledTaskToHistory(alarmName) {
       const timestamp = item.queriedAt || item.triggerTime || now;
       return (now - timestamp) < ONE_DAY_MS;
     });
+
+    // An alarm can be delivered more than once after a browser wake/restart.
+    if (history.some(item => item.id === task.id && !task.historyOriginId)) {
+      return null;
+    }
 
     if (task.historyOriginId) {
       // If this task was a reschedule of an existing history item, update and bring to top
@@ -262,11 +328,7 @@ async function moveScheduledTaskToHistory(alarmName) {
       });
     }
 
-    // Atomic write to storage for both keys
-    await chrome.storage.local.set({
-      [STORAGE_KEYS.SCHEDULED_TASKS]: scheduledTasks,
-      [STORAGE_KEYS.HISTORY_TASKS]: history
-    });
+    await setHistoryTasks(history);
     await scheduleHistoryCleanup(history);
 
     return task;
@@ -364,7 +426,7 @@ async function rescheduleHistoryItem(historyId, additionalMinutes) {
     await setLastScheduledTime(triggerTime);
 
     // Register alarm AFTER task data is persisted
-    await chrome.alarms.create(newTaskId, { when: triggerTime });
+    await chrome.alarms.create(newTaskId, { when: triggerTime, persistAcrossSessions: true });
 
     return { item, newTaskId, triggerTime };
   });
@@ -395,11 +457,15 @@ const StorageService = {
   STORAGE_KEYS,
   ONE_DAY_MS,
   HISTORY_CLEANUP_ALARM,
+  TASK_ALARM_PREFIX,
   withStorageLock,
   getScheduledTasks,
   setScheduledTasks,
+  migrateScheduledTasksToSync,
+  restoreScheduledAlarms,
   getHistoryTasks,
   pruneHistoryTasks,
+  pruneExpiredScheduledTasks,
   setHistoryTasks,
   getLastScheduledTime,
   setLastScheduledTime,

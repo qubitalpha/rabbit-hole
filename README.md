@@ -2,7 +2,7 @@
 
 A lightweight, powerful Google Chrome / Chromium extension built with standard Manifest V3 and zero runtime external dependencies. **rabbit-hole** allows you to schedule search queries and web links to automatically open in individual tabs at specified dates and times.
 
-Supports both **Google Search** and **YouTube Search**, intelligent prefix detection, a 24-hour history with automatic expiration, ergonomic quick-time buttons, and desktop notifications.
+Supports both **Google Search** and **YouTube Search**, intelligent prefix detection, synced schedules across Chrome devices, a 24-hour history with automatic expiration, ergonomic quick-time buttons, and desktop notifications.
 
 ---
 
@@ -30,6 +30,7 @@ Supports both **Google Search** and **YouTube Search**, intelligent prefix detec
 ### 📜 24-Hour Sliding History & Instant Rescheduling
 - **Dual Tab Interface**: Toggle between active **Scheduled** tasks and past **History** tasks with dynamic badge counters.
 - **History Cleanup**: Finished tasks expire automatically after 24 hours, can be cleared individually or in bulk, and can be rescheduled for +15m.
+- **Multi-Device Schedules**: Scheduled tasks sync through Chrome Sync and run on every device that is active at the scheduled time; execution history stays local to each device.
 - **Automatic 24h Pruning**: Automatically prunes executed queries older than 24 hours while preserving rescheduled items with future trigger times.
 - **Engine Preservation**: Retains the original search engine (Google vs. YouTube) when rescheduling from history.
 

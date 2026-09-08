@@ -3,42 +3,38 @@ const assert = require('node:assert/strict');
 
 // Setup Chrome API mocks in global scope before requiring modules
 function createChromeMock() {
-  const store = {};
+  const localStore = {};
+  const syncStore = {};
   const alarms = new Map();
+  const createStorageArea = (store) => ({
+    get: async (keys) => {
+      await new Promise((r) => setTimeout(r, 2));
+      if (!keys) return JSON.parse(JSON.stringify(store));
+      if (typeof keys === 'string') {
+        return { [keys]: store[keys] === undefined ? undefined : JSON.parse(JSON.stringify(store[keys])) };
+      }
+      if (Array.isArray(keys)) {
+        const result = {};
+        keys.forEach((key) => {
+          if (store[key] !== undefined) result[key] = JSON.parse(JSON.stringify(store[key]));
+        });
+        return result;
+      }
+      const result = {};
+      for (const key of Object.keys(keys)) result[key] = store[key] === undefined ? keys[key] : JSON.parse(JSON.stringify(store[key]));
+      return result;
+    },
+    set: async (items) => {
+      await new Promise((r) => setTimeout(r, 2));
+      for (const [key, value] of Object.entries(items)) store[key] = JSON.parse(JSON.stringify(value));
+    },
+    _store: store
+  });
 
   return {
     storage: {
-      local: {
-        get: async (keys) => {
-          // Simulate slight async I/O delay
-          await new Promise((r) => setTimeout(r, 2));
-          if (!keys) return { ...store };
-          if (typeof keys === 'string') {
-            return { [keys]: store[keys] ? JSON.parse(JSON.stringify(store[keys])) : undefined };
-          }
-          if (Array.isArray(keys)) {
-            const result = {};
-            keys.forEach((k) => {
-              if (store[k] !== undefined) {
-                result[k] = JSON.parse(JSON.stringify(store[k]));
-              }
-            });
-            return result;
-          }
-          const result = {};
-          for (const k of Object.keys(keys)) {
-            result[k] = store[k] !== undefined ? JSON.parse(JSON.stringify(store[k])) : keys[k];
-          }
-          return result;
-        },
-        set: async (items) => {
-          await new Promise((r) => setTimeout(r, 2));
-          for (const [k, v] of Object.entries(items)) {
-            store[k] = JSON.parse(JSON.stringify(v));
-          }
-        },
-        _store: store
-      }
+      local: createStorageArea(localStore),
+      sync: createStorageArea(syncStore)
     },
     alarms: {
       create: async (name, info) => {
@@ -47,6 +43,7 @@ function createChromeMock() {
       clear: async (name) => {
         alarms.delete(name);
       },
+      getAll: async () => [...alarms.entries()].map(([name, info]) => ({ name, ...info })),
       _alarms: alarms
     },
     tabs: {
@@ -141,7 +138,7 @@ describe('Rabbit Hole - Core Regression & Concurrency Tests', () => {
   });
 
   describe('Bug Fix 1: Single Task Moves to History on Execution', () => {
-    test('task moves from scheduled_tasks to history_tasks atomically', async () => {
+    test('task remains synced while moving into this device history', async () => {
       const triggerTime = Date.now() + 60000;
       const scheduled = await StorageService.scheduleNewTask(['quantum computing'], triggerTime, 'google');
       assert.ok(scheduled.id);
@@ -156,9 +153,9 @@ describe('Rabbit Hole - Core Regression & Concurrency Tests', () => {
       assert.ok(executed);
       assert.equal(executed.id, scheduled.id);
 
-      // Verify scheduled queue is now empty
+      // Keep the shared task so other active devices can execute it too.
       scheduledTasks = await StorageService.getScheduledTasks();
-      assert.equal(scheduledTasks.length, 0);
+      assert.equal(scheduledTasks.length, 1);
 
       // Verify task is now in history
       const history = await StorageService.getHistoryTasks();
@@ -197,8 +194,21 @@ describe('Rabbit Hole - Core Regression & Concurrency Tests', () => {
     });
   });
 
+  describe('Cross-device task synchronization', () => {
+    test('migrates existing local scheduled tasks to synced storage and restores alarms', async () => {
+      const task = { id: 'query_alarm_existing', queries: ['sync me'], triggerTime: Date.now() + 60000 };
+      await global.chrome.storage.local.set({ [StorageService.STORAGE_KEYS.SCHEDULED_TASKS]: [task] });
+
+      await StorageService.migrateScheduledTasksToSync();
+      await StorageService.restoreScheduledAlarms();
+
+      assert.deepEqual(await StorageService.getScheduledTasks(), [task]);
+      assert.ok(global.chrome.alarms._alarms.has(task.id));
+    });
+  });
+
   describe('Bug Fix 2: Multi-Task Concurrent Execution Clearing', () => {
-    test('all concurrent tasks scheduled at identical time are cleared from queue and moved to history', async () => {
+    test('all concurrent tasks at identical time remain shared and move to local history', async () => {
       const now = Date.now();
       const triggerTime = now + 10000;
 
@@ -231,12 +241,12 @@ describe('Rabbit Hole - Core Regression & Concurrency Tests', () => {
         assert.ok(t, `Task ${idx} should have been processed`);
       });
 
-      // Scheduled tasks must now be completely empty (none left stuck!)
+      // Scheduled tasks stay synced for other devices to execute.
       scheduledTasks = await StorageService.getScheduledTasks();
       assert.equal(
         scheduledTasks.length,
-        0,
-        `Expected 0 scheduled tasks remaining, found ${scheduledTasks.length}`
+        taskCount,
+        `Expected ${taskCount} shared tasks remaining, found ${scheduledTasks.length}`
       );
 
       // History must now contain all 5 tasks
